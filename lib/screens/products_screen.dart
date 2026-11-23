@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../models/product.dart';
 import '../models/supplier.dart';
 import '../services/database_service.dart';
+import 'product_detail_screen.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key, required this.onDataChanged});
@@ -56,6 +57,20 @@ class _ProductsScreenState extends State<ProductsScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+    }
+  }
+
+  Future<void> _showDetails(Product product) async {
+    final action = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => ProductDetailScreen(product: product),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'edit') {
+      await _edit(product);
+    } else if (action == 'delete') {
+      await _delete(product);
     }
   }
 
@@ -163,6 +178,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   padding: const EdgeInsets.only(bottom: 11),
                   child: _ProductCard(
                     product: product,
+                    onDetails: () => _showDetails(product),
                     onEdit: () => _edit(product),
                     onDelete: () => _delete(product),
                   ),
@@ -179,11 +195,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
 class _ProductCard extends StatelessWidget {
   const _ProductCard({
     required this.product,
+    required this.onDetails,
     required this.onEdit,
     required this.onDelete,
   });
 
   final Product product;
+  final VoidCallback onDetails;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -226,6 +244,11 @@ class _ProductCard extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            IconButton(
+              tooltip: 'Ver detalle',
+              onPressed: onDetails,
+              icon: const Icon(Icons.open_in_new_rounded),
             ),
             PopupMenuButton<String>(
               tooltip: 'Opciones',

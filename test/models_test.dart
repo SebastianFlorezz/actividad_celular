@@ -49,7 +49,7 @@ void main() {
       expect(product.supplierName, 'Mercado Norte');
     });
 
-    test('serializes product fields for SQLite', () {
+    test('serializes product fields for persistence', () {
       final product = Product(
         id: 8,
         name: '  Café ',

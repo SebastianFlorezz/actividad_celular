@@ -113,7 +113,7 @@ class DashboardScreen extends StatelessWidget {
               children: [
                 Text('Resumen general', style: Theme.of(context).textTheme.titleLarge),
                 const Text(
-                  'DATOS LOCALES',
+                  'SINCRONIZADO',
                   style: TextStyle(
                     fontSize: 9,
                     letterSpacing: 1.1,
@@ -178,7 +178,7 @@ class DashboardScreen extends StatelessWidget {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Tus datos se guardan de forma segura en este dispositivo.',
+                      'Tus datos se sincronizan con Supabase y están protegidos por tu cuenta.',
                       style: TextStyle(
                         color: Color(0xFF49655D),
                         fontSize: 12,

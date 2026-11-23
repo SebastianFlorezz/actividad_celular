@@ -1,22 +1,32 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
-import 'services/database_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (kIsWeb) {
-    databaseFactory = databaseFactoryFfiWeb;
+  const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  const supabasePublishableKey = String.fromEnvironment(
+    'SUPABASE_PUBLISHABLE_KEY',
+  );
+  const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  final supabaseKey = supabasePublishableKey.isNotEmpty
+      ? supabasePublishableKey
+      : supabaseAnonKey;
+  final configured = supabaseUrl.isNotEmpty && supabaseKey.isNotEmpty;
+  if (configured) {
+    await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
   }
-  await DatabaseService.instance.database;
-  runApp(const InventoryApp());
+  runApp(InventoryApp(configured: configured));
 }
 
 class InventoryApp extends StatelessWidget {
-  const InventoryApp({super.key});
+  const InventoryApp({super.key, required this.configured});
+
+  final bool configured;
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +87,68 @@ class InventoryApp extends StatelessWidget {
           centerTitle: false,
         ),
       ),
-      home: const HomeScreen(),
+      home: configured
+          ? const AuthenticationGate()
+          : const SupabaseConfigurationScreen(),
     );
   }
+}
+
+class SupabaseConfigurationScreen extends StatelessWidget {
+  const SupabaseConfigurationScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 54),
+            const SizedBox(height: 16),
+            Text('Falta configurar Supabase', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            const Text(
+              'Inicia la aplicación con SUPABASE_URL y SUPABASE_ANON_KEY. '
+              'Consulta README.md para configurar el servicio y sus políticas de seguridad.',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class AuthenticationGate extends StatefulWidget {
+  const AuthenticationGate({super.key});
+
+  @override
+  State<AuthenticationGate> createState() => _AuthenticationGateState();
+}
+
+class _AuthenticationGateState extends State<AuthenticationGate> {
+  late Session? _session;
+  late final StreamSubscription<AuthState> _authSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    final auth = Supabase.instance.client.auth;
+    _session = auth.currentSession;
+    _authSubscription = auth.onAuthStateChange.listen((state) {
+      if (mounted) setState(() => _session = state.session);
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_authSubscription.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      _session == null ? const AuthScreen() : const HomeScreen();
 }

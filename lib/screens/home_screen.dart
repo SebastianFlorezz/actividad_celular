@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'dashboard_screen.dart';
 import 'products_screen.dart';
@@ -23,6 +24,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _selectPage(int index) {
     setState(() => _selectedIndex = index);
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await Supabase.instance.client.auth.signOut();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cerrar sesión: $error')),
+      );
+    }
   }
 
   @override
@@ -63,22 +75,44 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
         ),
-        actions: _selectedIndex == 0
-            ? [
-                Padding(
-                  padding: const EdgeInsets.only(right: 18),
-                  child: CircleAvatar(
-                    radius: 19,
-                    backgroundColor: const Color(0xFFE5F1ED),
-                    child: Icon(
-                      Icons.inventory_2_rounded,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 19,
-                    ),
-                  ),
+        actions: [
+          if (_selectedIndex == 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: CircleAvatar(
+                radius: 19,
+                backgroundColor: const Color(0xFFE5F1ED),
+                child: Icon(
+                  Icons.inventory_2_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: 19,
                 ),
-              ]
-            : null,
+              ),
+            ),
+          IconButton(
+            tooltip: 'Sincronizar con la base de datos',
+            onPressed: _onDataChanged,
+            icon: const Icon(Icons.sync_rounded),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Cuenta',
+            onSelected: (value) {
+              if (value == 'signOut') _signOut();
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                enabled: false,
+                child: Text(
+                  Supabase.instance.client.auth.currentUser?.email ?? '',
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'signOut',
+                child: Text('Cerrar sesión'),
+              ),
+            ],
+          ),
+        ],
       ),
       body: IndexedStack(index: _selectedIndex, children: pages),
       floatingActionButton: _selectedIndex == 1 || _selectedIndex == 2

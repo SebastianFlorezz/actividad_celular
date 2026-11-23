@@ -1,5 +1,4 @@
-import 'package:path/path.dart' as path;
-import 'package:sqflite/sqflite.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/product.dart';
 import '../models/supplier.dart';
@@ -18,155 +17,123 @@ class DatabaseService {
   DatabaseService._();
 
   static final DatabaseService instance = DatabaseService._();
-  static const _databaseName = 'nexo_inventario.db';
-  static const _databaseVersion = 1;
-  Database? _database;
+  final SupabaseClient _client = Supabase.instance.client;
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    final databasesPath = await getDatabasesPath();
-    _database = await openDatabase(
-      path.join(databasesPath, _databaseName),
-      version: _databaseVersion,
-      onConfigure: (db) async {
-        await db.execute('PRAGMA foreign_keys = ON');
-      },
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE proveedores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            telefono TEXT,
-            correo TEXT
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE productos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            precio REAL NOT NULL,
-            stock INTEGER NOT NULL,
-            proveedor_id INTEGER NOT NULL,
-            FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
-              ON UPDATE CASCADE ON DELETE RESTRICT
-          )
-        ''');
-      },
-    );
-    return _database!;
+  String get _userId {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) {
+      throw StateError('Debes iniciar sesión para acceder a los datos.');
+    }
+    return userId;
   }
 
   Future<List<Supplier>> getSuppliers() async {
-    final db = await database;
-    final rows = await db.query('proveedores', orderBy: 'nombre COLLATE NOCASE');
+    final rows = await _client
+        .from('proveedores')
+        .select()
+        .order('nombre');
     return rows.map(Supplier.fromMap).toList();
   }
 
   Future<int> saveSupplier(Supplier supplier) async {
-    final db = await database;
     if (supplier.id == null) {
-      return db.insert('proveedores', supplier.toMap());
+      final values = supplier.toMap()..remove('id');
+      final result = await _client
+          .from('proveedores')
+          .insert({...values, 'owner_id': _userId})
+          .select('id')
+          .single();
+      return result['id'] as int;
     }
-    return db.update(
-      'proveedores',
-      supplier.toMap()..remove('id'),
-      where: 'id = ?',
-      whereArgs: [supplier.id],
-    );
+    final result = await _client
+        .from('proveedores')
+        .update(supplier.toMap()..remove('id'))
+        .eq('id', supplier.id!)
+        .select('id')
+        .single();
+    return result['id'] as int;
   }
 
   Future<int> getSupplierProductCount(int id) async {
-    final db = await database;
-    return Sqflite.firstIntValue(
-          await db.rawQuery(
-            'SELECT COUNT(*) FROM productos WHERE proveedor_id = ?',
-            [id],
-          ),
-        ) ??
-        0;
+    final products = await _client
+        .from('productos')
+        .select('id')
+        .eq('proveedor_id', id);
+    return products.length;
   }
 
   Future<void> deleteSupplier(
     int id, {
     int? reassignProductsToSupplierId,
   }) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      final associated = Sqflite.firstIntValue(
-        await txn.rawQuery(
-          'SELECT COUNT(*) FROM productos WHERE proveedor_id = ?',
-          [id],
-        ),
-      ) ?? 0;
-      if (associated > 0 && reassignProductsToSupplierId == null) {
-        throw SupplierHasProductsException(associated);
-      }
-      if (reassignProductsToSupplierId == id) {
-        throw ArgumentError('El proveedor de destino debe ser diferente.');
-      }
-      if (associated > 0) {
-        final destination = await txn.query(
-          'proveedores',
-          columns: ['id'],
-          where: 'id = ?',
-          whereArgs: [reassignProductsToSupplierId],
-          limit: 1,
-        );
-        if (destination.isEmpty) {
-          throw ArgumentError('El proveedor de destino ya no existe.');
-        }
-        await txn.update(
-          'productos',
-          {'proveedor_id': reassignProductsToSupplierId},
-          where: 'proveedor_id = ?',
-          whereArgs: [id],
-        );
-      }
-      await txn.delete('proveedores', where: 'id = ?', whereArgs: [id]);
-    });
+    final associated = await getSupplierProductCount(id);
+    if (associated > 0 && reassignProductsToSupplierId == null) {
+      throw SupplierHasProductsException(associated);
+    }
+    if (reassignProductsToSupplierId == id) {
+      throw ArgumentError('El proveedor de destino debe ser diferente.');
+    }
+    await _client.rpc(
+      'eliminar_proveedor',
+      params: {
+        'p_supplier_id': id,
+        'p_destination_id': reassignProductsToSupplierId,
+      },
+    );
   }
 
   Future<List<Product>> getProducts({String query = ''}) async {
-    final db = await database;
-    final rows = await db.rawQuery(
-      '''
-      SELECT productos.*, proveedores.nombre AS proveedor_nombre
-      FROM productos
-      INNER JOIN proveedores ON proveedores.id = productos.proveedor_id
-      WHERE productos.nombre LIKE ? COLLATE NOCASE
-      ORDER BY productos.nombre COLLATE NOCASE
-      ''',
-      ['%${query.trim()}%'],
-    );
-    return rows.map(Product.fromMap).toList();
+    final trimmedQuery = query.trim();
+    final rows = trimmedQuery.isEmpty
+        ? await _client
+              .from('productos')
+              .select('*, proveedores(nombre)')
+              .order('nombre')
+        : await _client
+              .from('productos')
+              .select('*, proveedores(nombre)')
+              .ilike('nombre', '%$trimmedQuery%')
+              .order('nombre');
+    return rows.map((row) {
+      final supplier = row['proveedores'] as Map<String, dynamic>?;
+      return Product.fromMap({
+        ...row,
+        'proveedor_nombre': supplier?['nombre'],
+      });
+    }).toList();
   }
 
   Future<int> saveProduct(Product product) async {
-    final db = await database;
     if (product.id == null) {
-      return db.insert('productos', product.toMap());
+      final values = product.toMap()..remove('id');
+      final result = await _client
+          .from('productos')
+          .insert({...values, 'owner_id': _userId})
+          .select('id')
+          .single();
+      return result['id'] as int;
     }
-    return db.update(
-      'productos',
-      product.toMap()..remove('id'),
-      where: 'id = ?',
-      whereArgs: [product.id],
-    );
+    final result = await _client
+        .from('productos')
+        .update(product.toMap()..remove('id'))
+        .eq('id', product.id!)
+        .select('id')
+        .single();
+    return result['id'] as int;
   }
 
   Future<int> deleteProduct(int id) async {
-    final db = await database;
-    return db.delete('productos', where: 'id = ?', whereArgs: [id]);
+    final result = await _client
+        .from('productos')
+        .delete()
+        .eq('id', id)
+        .select('id');
+    return result.length;
   }
 
   Future<({int products, int suppliers})> getSummary() async {
-    final db = await database;
-    final products = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM productos'),
-    );
-    final suppliers = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM proveedores'),
-    );
-    return (products: products ?? 0, suppliers: suppliers ?? 0);
+    final products = await _client.from('productos').select('id');
+    final suppliers = await _client.from('proveedores').select('id');
+    return (products: products.length, suppliers: suppliers.length);
   }
 }
